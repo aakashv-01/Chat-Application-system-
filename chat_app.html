@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Offline Multi-User Chat</title>
+<style>
+body {
+  font-family: "Poppins", sans-serif;
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(135deg, #3a1c71, #d76d77, #ffaf7b);
+  color: #fff;
+}
+.container {
+  background: rgba(0,0,0,0.6);
+  padding: 20px;
+  border-radius: 20px;
+  width: 90%;
+  max-width: 450px;
+  box-shadow: 0 0 10px rgba(255,255,255,0.3);
+}
+h2 { text-align: center; }
+input { width: 100%; padding: 10px; margin: 8px 0; border: none; border-radius: 8px; }
+button { padding: 10px; border: none; border-radius: 8px; background: #4caf50; color: white; cursor: pointer; }
+button:hover { background: #45a049; }
+.hidden { display: none; }
+.chat-container { display: flex; flex-direction: column; height: 60vh; }
+.messages { flex: 1; overflow-y: auto; margin-bottom: 10px; }
+.message { padding: 8px; border-radius: 10px; margin: 5px 0; max-width: 80%; word-wrap: break-word; position: relative; }
+.me { background: #4caf50; align-self: flex-end; }
+.other { background: #2196f3; align-self: flex-start; }
+.system { text-align: center; font-size: 0.8em; color: #ccc; margin-bottom: 5px; }
+.input-area { display: flex; align-items: center; gap: 5px; }
+.delete-btn { background: transparent; border: none; color: white; font-size: 0.8em; cursor: pointer; float: right; }
+img.chat-img { max-width: 180px; border-radius: 10px; margin-top: 5px; }
+.time { font-size: 0.7em; color: #eee; text-align: right; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN/SIGNUP -->
+<div class="container" id="auth">
+  <h2>Login / Sign Up</h2>
+  <input type="text" id="username" placeholder="Username" />
+  <input type="password" id="password" placeholder="Password" />
+  <button id="loginBtn">Login</button>
+  <button id="signupBtn" style="background:#2196f3;">Sign Up</button>
+  <button id="guestBtn" style="background:#ff9800;">Join as Guest</button>
+</div>
+
+<!-- CHAT -->
+<div class="container hidden" id="chatSection">
+  <h2 id="welcome"></h2>
+  <div class="system" id="activeUsers">Active users: </div>
+  <div class="chat-container">
+    <div class="messages" id="messages"></div>
+    <div class="input-area">
+      <input type="file" id="fileInput" accept="image/*" />
+      <input type="text" id="messageInput" placeholder="Type message..." />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+  <button id="logoutBtn" style="background:#f44336;width:100%;">Logout</button>
+</div>
+
+<script>
+// Keys and channel
+const usersKey = "chatUsers";
+const messagesKey = "chatMessages";
+const channel = new BroadcastChannel("chatRoom");
+
+// Elements
+const messagesDiv = document.getElementById("messages");
+const messageInput = document.getElementById("messageInput");
+const fileInput = document.getElementById("fileInput");
+const sendBtn = document.getElementById("sendBtn");
+const authDiv = document.getElementById("auth");
+const chatDiv = document.getElementById("chatSection");
+const welcome = document.getElementById("welcome");
+const activeUsersDiv = document.getElementById("activeUsers");
+let currentUser = null;
+
+// USER MANAGEMENT
+function getUsers(){ return JSON.parse(localStorage.getItem(usersKey)||"{}"); }
+function saveUsers(users){ localStorage.setItem(usersKey, JSON.stringify(users)); }
+
+// SIGNUP
+document.getElementById("signupBtn").onclick = ()=>{
+  const user=document.getElementById("username").value.trim();
+  const pass=document.getElementById("password").value.trim();
+  if(!user||!pass) return alert("Enter username & password");
+  const users=getUsers();
+  if(users[user]) return alert("User already exists");
+  users[user]=pass; saveUsers(users);
+  alert("Signup successful! Please login now.");
+};
+
+// LOGIN
+document.getElementById("loginBtn").onclick = ()=>{
+  const user=document.getElementById("username").value.trim();
+  const pass=document.getElementById("password").value.trim();
+  if(!user||!pass) return alert("Enter username & password");
+  const users=getUsers();
+  if(!users[user]) return alert("User not found. Sign up first.");
+  if(users[user]!==pass) return alert("Incorrect password");
+  currentUser=user;
+  startChat();
+};
+
+// GUEST
+document.getElementById("guestBtn").onclick = ()=>{
+  currentUser="Guest"+Math.floor(Math.random()*1000);
+  startChat();
+};
+
+// START CHAT
+function startChat(){
+  authDiv.classList.add("hidden");
+  chatDiv.classList.remove("hidden");
+  welcome.textContent="Welcome, "+currentUser+"!";
+  renderMessages();
+  channel.postMessage({ type:"join", user:currentUser });
+}
+
+// LOGOUT
+document.getElementById("logoutBtn").onclick = ()=>{
+  channel.postMessage({ type:"leave", user:currentUser });
+  currentUser=null;
+  chatDiv.classList.add("hidden");
+  authDiv.classList.remove("hidden");
+};
+
+// MESSAGES STORAGE
+let messages = JSON.parse(localStorage.getItem(messagesKey)||"[]");
+
+// ACTIVE USERS
+const activeUsers = new Set();
+function updateActiveUsers() {
+  activeUsersDiv.textContent = "Active users: " + [...activeUsers].join(", ");
+}
+
+// ADD MESSAGE
+function addMessage(sender,text,id,isImage=false){
+  const div=document.createElement("div");
+  div.className="message "+(sender===currentUser?"me":"other");
+  div.dataset.id=id;
+  
+  const time = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  
+  div.innerHTML=`<strong>${sender}:</strong> ${isImage?`<br><img src="${text}" class='chat-img'>`:text} 
+                  <div class="time">${time}</div>`;
+  
+  if(sender===currentUser){
+    const delBtn=document.createElement("button");
+    delBtn.textContent="✖";
+    delBtn.className="delete-btn";
+    delBtn.onclick=()=>{
+      div.remove();
+      messages=messages.filter(m=>m.id!==id);
+      localStorage.setItem(messagesKey,JSON.stringify(messages));
+      channel.postMessage({type:"delete",id});
+    };
+    div.appendChild(delBtn);
+  }
+  messagesDiv.appendChild(div);
+  messagesDiv.scrollTop=messagesDiv.scrollHeight;
+}
+
+// RENDER ALL MESSAGES
+function renderMessages(){
+  messagesDiv.innerHTML="";
+  messages.forEach(m=>addMessage(m.sender,m.text,m.id,m.isImage));
+}
+
+// SEND MESSAGE
+sendBtn.onclick = ()=>{
+  const msg=messageInput.value.trim();
+  if(!msg) return;
+  const msgId=Date.now().toString();
+  const newMsg={sender:currentUser,text:msg,id:msgId};
+  messages.push(newMsg);
+  localStorage.setItem(messagesKey,JSON.stringify(messages));
+  addMessage(currentUser,msg,msgId);
+  messageInput.value="";
+  messageInput.focus();
+  channel.postMessage({type:"chat",...newMsg});
+};
+
+// ENTER TO SEND
+messageInput.addEventListener("keypress", (e)=>{
+  if(e.key==="Enter") sendBtn.click();
+});
+
+// SEND IMAGE
+fileInput.onchange=(e)=>{
+  const file=e.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    const imgData=reader.result;
+    const msgId=Date.now().toString();
+    const newMsg={sender:currentUser,text:imgData,id:msgId,isImage:true};
+    messages.push(newMsg);
+    localStorage.setItem(messagesKey,JSON.stringify(messages));
+    addMessage(currentUser,imgData,msgId,true);
+    channel.postMessage({type:"image",...newMsg});
+  };
+  reader.readAsDataURL(file);
+};
+
+// BROADCAST CHANNEL LISTENER
+channel.onmessage=(e)=>{
+  const data=e.data;
+  
+  if(data.type==="chat"||data.type==="image"){
+    if(!messages.find(m=>m.id===data.id)){
+      messages.push(data);
+      localStorage.setItem(messagesKey,JSON.stringify(messages));
+      addMessage(data.sender,data.text,data.id,data.isImage);
+    }
+  } else if(data.type==="delete"){
+    const msgDiv=[...messagesDiv.children].find(m=>m.dataset.id===data.id);
+    if(msgDiv) msgDiv.remove();
+    messages=messages.filter(m=>m.id!==data.id);
+    localStorage.setItem(messagesKey,JSON.stringify(messages));
+  } else if(data.type==="join"){
+    activeUsers.add(data.user);
+    updateActiveUsers();
+  } else if(data.type==="leave"){
+    activeUsers.delete(data.user);
+    updateActiveUsers();
+  }
+};
+
+// HANDLE TAB CLOSE
+window.addEventListener("beforeunload", () => {
+  if(currentUser) channel.postMessage({ type:"leave", user:currentUser });
+});
+</script>
+
+</body>
+</html>
